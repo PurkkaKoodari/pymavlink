@@ -177,7 +177,7 @@ f.${fmsg}_${fname}${findex} = ProtoField.new("${fname}${farray} (${ftypename})",
 
     t.write(outf, '\n\n')
 
-def generate_field_dissector(outf, msg, field):
+def generate_field_dissector(outf, msg, field, offset):
     assert isinstance(field, mavparse.MAVField)
     
     _, _, tvb_func, size, count = get_field_info(field)
@@ -191,36 +191,32 @@ def generate_field_dissector(outf, msg, field):
             index_text = ''
         t.write(outf,
 """
-    if (truncated) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, padded(offset, ${fbytes}):${ftvbfunc}())
-    elseif (offset + ${fbytes} <= limit) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(offset, ${fbytes}), buffer(offset, ${fbytes}):${ftvbfunc}())
-        offset = offset + ${fbytes}
-    elseif (offset < limit) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(offset, limit - offset), padded(offset, ${fbytes}):${ftvbfunc}())
-        offset = limit
-        truncated = true
+    field_offset = offset + ${foffset}
+    if (field_offset + ${fbytes} <= limit) then
+        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(field_offset, ${fbytes}), buffer(field_offset, ${fbytes}):${ftvbfunc}())
+    elseif (field_offset < limit) then
+        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(field_offset, limit - offset - ${foffset}), padded(field_offset, ${fbytes}):${ftvbfunc}())
     else
-        tree:add_le(f.${fmsg}_${fname}${findex}, padded(offset, ${fbytes}):${ftvbfunc}())
-        truncated = true
+        tree:add_le(f.${fmsg}_${fname}${findex}, padded(field_offset, ${fbytes}):${ftvbfunc}())
     end
-""", {'fname':field.name, 'fmsg': msg.name, 'fbytes':size, 'findex':index_text, 'ftvbfunc':tvb_func})
+""", {'fname':field.name, 'fmsg': msg.name, 'foffset':offset, 'fbytes':size, 'findex':index_text, 'ftvbfunc':tvb_func})
     
 
 def generate_payload_dissector(outf, msg):
     assert isinstance(msg, mavparse.MAVType)
 
     total_size = 0
+    offsets = {}
     for f in msg.ordered_fields:
         _, _, _, size, count = get_field_info(f)
+        offsets[f.name] = total_size
         total_size += size * count
 
     t.write(outf, 
 """
 -- dissect payload of message type ${msgname}
 function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit)
-    local truncated = false
-    local padded
+    local padded, field_offset
     if (offset + ${msgbytes} > limit) then
         padded = buffer(0, limit):bytes()
         padded:set_size(offset + ${msgbytes})
@@ -228,9 +224,8 @@ function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit)
     end
 """, {'msgid':msg.id, 'msgname':msg.name, 'msgbytes': total_size})
     
-    for f in msg.ordered_fields:
-        generate_field_dissector(outf, msg, f)
-
+    for f in msg.fields:
+        generate_field_dissector(outf, msg, f, offsets[f.name])
 
     t.write(outf, 
 """
