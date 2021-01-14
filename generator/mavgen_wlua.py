@@ -215,7 +215,7 @@ def generate_payload_dissector(outf, msg):
     t.write(outf, 
 """
 -- dissect payload of message type ${msgname}
-function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit)
+function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit, pinfo)
     local padded, field_offset
     if (offset + ${msgbytes} > limit) then
         padded = buffer(0, limit):bytes()
@@ -223,6 +223,19 @@ function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit)
         padded = padded:tvb("Untruncated payload")
     end
 """, {'msgid':msg.id, 'msgname':msg.name, 'msgbytes': total_size})
+
+    # parse command name if applicable
+    if msg.name in ("COMMAND_INT", "COMMAND_LONG", "COMMAND_ACK", "COMMAND_CANCEL") and "command" in offsets:
+        t.write(outf,
+"""
+    if enumEntryName.MAV_CMD ~= nil then
+        cmdid = padded(offset + ${foffset}, 2):le_uint()
+        cmdname = enumEntryName.MAV_CMD[cmdid]
+        if cmdname ~= nil then
+            pinfo.cols.info:append(": " .. cmdname)
+        end
+    end
+""", {'foffset': offsets["command"]})
     
     for f in msg.fields:
         generate_field_dissector(outf, msg, f, offsets[f.name])
@@ -409,7 +422,7 @@ function mavlink_proto.dissector(buffer,pinfo,tree)
             else
                 pinfo.cols.info:append("   "..messageName[msgid])
             end
-            fn(buffer, payload, msgid, offset, limit)
+            fn(buffer, payload, msgid, offset, limit, pinfo)
             offset = limit
         end
 
