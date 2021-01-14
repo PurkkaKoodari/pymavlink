@@ -272,7 +272,7 @@ function mavlink_proto.dissector(buffer,pinfo,tree)
         if (version == 0xfe) then
             if (buffer:len() - 2 - offset > 6) then
                 -- normal header
-                local header = subtree:add("Header")
+                local header = subtree:add(buffer(offset, 6), "Header")
                 header:add(f.magic, buffer(offset,1), version)
                 offset = offset + 1
             
@@ -306,7 +306,7 @@ function mavlink_proto.dissector(buffer,pinfo,tree)
         elseif (version == 0xfd) then
             if (buffer:len() - 2 - offset > 10) then
                 -- normal header
-                local header = subtree:add("Header")
+                local header = subtree:add(buffer(offset, 10), "Header")
                 header:add(f.magic, buffer(offset,1), version)
                 offset = offset + 1
                 length = buffer(offset,1)
@@ -365,7 +365,7 @@ function mavlink_proto.dissector(buffer,pinfo,tree)
             subtree:add(f.rawpayload, buffer(offset,size))
             offset = offset + size
         else
-            local payload = subtree:add(f.payload, msgid)
+            local payload = subtree:add(f.payload, buffer(offset, limit - offset), msgid)
             pinfo.cols.dst:set(messageName[msgid])
             if (msgCount == 1) then
             -- first message should over write the TCP/UDP info
