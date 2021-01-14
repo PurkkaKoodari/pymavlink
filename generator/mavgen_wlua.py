@@ -21,14 +21,6 @@ from . import mavparse, mavtemplate
 t = mavtemplate.MAVTemplate()
 
 
-def lua_type(mavlink_type):
-    # qnd typename conversion
-    if (mavlink_type=='char'):
-        lua_t = 'uint8'
-    else:
-        lua_t = mavlink_type.replace('_t', '')
-    return lua_t
-
 def type_size(mavlink_type):
     # infer size of mavlink types
     re_int = re.compile('^(u?)int(8|16|32|64)_t$')
@@ -43,6 +35,26 @@ def type_size(mavlink_type):
         return 1
     else:
         raise Exception('unsupported MAVLink type - please fix me')
+
+
+def get_field_info(field):
+    mavlink_type = field.type
+    size = type_size(mavlink_type)
+    count = field.array_length if field.array_length > 0 else 1
+
+    if mavlink_type == "char":
+        # char (string) types
+        field_type = "ftypes.STRING"
+        size = count
+        count = 1
+    elif "int" in mavlink_type:
+        # (u)int types
+        field_type = "ftypes." + mavlink_type.replace("_t", "").upper()
+    else:
+        # float/double
+        field_type = "ftypes." + mavlink_type.upper()
+
+    return mavlink_type, field_type, size, count
 
 
 def generate_preamble(outf):
@@ -116,14 +128,7 @@ def generate_msg_fields(outf, msg):
     assert isinstance(msg, mavparse.MAVType)
     for f in msg.fields:
         assert isinstance(f, mavparse.MAVField)
-        mtype = f.type
-        ltype = lua_type(mtype)
-        count = f.array_length if f.array_length>0 else 1
-
-        # string is no array, but string of chars
-        if mtype == 'char' and count > 1: 
-            count = 1
-            ltype = 'string'
+        mavlink_type, field_type, _, count = get_field_info(f)
         
         for i in range(0,count):
             if count>1: 
@@ -135,23 +140,15 @@ def generate_msg_fields(outf, msg):
                 
             t.write(outf,
 """
-f.${fmsg}_${fname}${findex} = ProtoField.${ftype}("mavlink_proto.${fmsg}_${fname}${findex}", "${fname}${farray} (${ftype})")
-""", {'fmsg':msg.name, 'ftype':ltype, 'fname':f.name, 'findex':index_text, 'farray':array_text})        
+f.${fmsg}_${fname}${findex} = ProtoField.new("${fname}${farray} (${ftypename})", "mavlink_proto.${fmsg}_${fname}${findex}", ${ftype})
+""", {'fmsg':msg.name, 'ftype':field_type, 'ftypename': mavlink_type, 'fname':f.name, 'findex':index_text, 'farray':array_text})
 
     t.write(outf, '\n\n')
 
 def generate_field_dissector(outf, msg, field):
     assert isinstance(field, mavparse.MAVField)
     
-    mtype = field.type
-    size = type_size(mtype)
-    ltype = lua_type(mtype)
-    count = field.array_length if field.array_length>0 else 1
-
-    # string is no array but string of chars
-    if mtype == 'char': 
-        size = count
-        count = 1
+    _, _, size, count = get_field_info(field)
     
     # handle arrays, but not strings
     
@@ -175,7 +172,7 @@ def generate_field_dissector(outf, msg, field):
         tree:add_le(f.${fmsg}_${fname}${findex}, 0)
         truncated = true
     end
-""", {'fname':field.name, 'ftype':mtype, 'fmsg': msg.name, 'fbytes':size, 'findex':index_text})
+""", {'fname':field.name, 'fmsg': msg.name, 'fbytes':size, 'findex':index_text})
     
 
 def generate_payload_dissector(outf, msg):
