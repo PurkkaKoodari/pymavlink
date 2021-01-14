@@ -43,30 +43,6 @@ def type_size(mavlink_type):
         return 1
     else:
         raise Exception('unsupported MAVLink type - please fix me')
-    
-
-def mavfmt(field):
-    '''work out the struct format for a type'''
-    map = {
-        'float'    : 'f',
-        'double'   : 'd',
-        'char'     : 'c',
-        'int8_t'   : 'b',
-        'uint8_t'  : 'B',
-        'uint8_t_mavlink_version'  : 'B',
-        'int16_t'  : 'h',
-        'uint16_t' : 'H',
-        'int32_t'  : 'i',
-        'uint32_t' : 'I',
-        'int64_t'  : 'q',
-        'uint64_t' : 'Q',
-        }
-
-    if field.array_length:
-        if field.type in ['char', 'int8_t', 'uint8_t']:
-            return str(field.array_length)+'s'
-        return str(field.array_length)+map[field.type]
-    return map[field.type]
 
 
 def generate_preamble(outf):
@@ -452,7 +428,7 @@ udp_dissector_table:add(14580, mavlink_proto)
 """)
 
 def generate(basename, xml):
-    '''generate complete python implemenation'''
+    '''generate complete lua implemenation'''
     if basename.endswith('.lua'):
         filename = basename
     else:
@@ -467,12 +443,6 @@ def generate(basename, xml):
         filelist.append(os.path.basename(x.filename))
 
     for m in msgs:
-        if xml[0].little_endian:
-            m.fmtstr = '<'
-        else:
-            m.fmtstr = '>'
-        for f in m.ordered_fields:
-            m.fmtstr += mavfmt(f)
         m.order_map = [ 0 ] * len(m.fieldnames)
         for i in range(0, len(m.fieldnames)):
             m.order_map[i] = m.ordered_fieldnames.index(m.fieldnames[i])
