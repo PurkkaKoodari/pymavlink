@@ -122,13 +122,38 @@ messageName = {
 }
 
 """)
-        
+
+
+def generate_enum_table(outf, enums):
+    t.write(outf, """
+enumEntryName = {
+""")
+    for enum in enums:
+        assert isinstance(enum, mavparse.MAVEnum)
+        t.write(outf, """
+    ["${enumname}"] = {
+""", {'enumname': enum.name})
+
+        for entry in enum.entry:
+            t.write(outf, """
+        [${entryvalue}] = "${entryname}",
+""", {'entryvalue': entry.value, 'entryname': entry.name})
+
+        t.write(outf, """
+    },
+""")
+
+    t.write(outf, """
+}
+""")
+
 
 def generate_msg_fields(outf, msg):
     assert isinstance(msg, mavparse.MAVType)
     for f in msg.fields:
         assert isinstance(f, mavparse.MAVField)
         mavlink_type, field_type, _, count = get_field_info(f)
+        values = "enumEntryName. " + f.enum if f.enum else "nil"
         
         for i in range(0,count):
             if count>1: 
@@ -140,8 +165,8 @@ def generate_msg_fields(outf, msg):
                 
             t.write(outf,
 """
-f.${fmsg}_${fname}${findex} = ProtoField.new("${fname}${farray} (${ftypename})", "mavlink_proto.${fmsg}_${fname}${findex}", ${ftype})
-""", {'fmsg':msg.name, 'ftype':field_type, 'ftypename': mavlink_type, 'fname':f.name, 'findex':index_text, 'farray':array_text})
+f.${fmsg}_${fname}${findex} = ProtoField.new("${fname}${farray} (${ftypename})", "mavlink_proto.${fmsg}_${fname}${findex}", ${ftype}, ${fvalues})
+""", {'fmsg':msg.name, 'ftype':field_type, 'ftypename': mavlink_type, 'fname':f.name, 'findex':index_text, 'farray':array_text, 'fvalues':values})
 
     t.write(outf, '\n\n')
 
@@ -448,6 +473,7 @@ def generate(basename, xml):
     outf = open(filename, "w")
     generate_preamble(outf)
     generate_msg_table(outf, msgs)
+    generate_enum_table(outf, enums)
     generate_body_fields(outf)
     
     for m in msgs:
