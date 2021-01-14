@@ -65,13 +65,19 @@ local signature_time_ref = get_timezone() + os.time{year=2015, month=1, day=1, h
 
 payload_fns = {}
 
+protocolVersions = {
+    [0xfd] = "MAVLink 2.0",
+    [0xfe] = "MAVLink 1.0",
+    [0x55] = "MAVLink 0.9"
+}
+
 """ )
     
     
 def generate_body_fields(outf):
     t.write(outf, 
 """
-f.magic = ProtoField.uint8("mavlink_proto.magic", "Magic value / version", base.HEX)
+f.magic = ProtoField.uint8("mavlink_proto.magic", "Magic value / version", base.HEX, protocolVersions)
 f.length = ProtoField.uint8("mavlink_proto.length", "Payload length")
 f.incompatibility_flag = ProtoField.uint8("mavlink_proto.incompatibility_flag", "Incompatibility flag")
 f.compatibility_flag = ProtoField.uint8("mavlink_proto.compatibility_flag", "Compatibility flag")
@@ -214,14 +220,8 @@ function mavlink_proto.dissector(buffer,pinfo,tree)
     
     	while (true)
 		do
-            if (version == 0xfe) then
-                protocolString = "MAVLink 1.0"
-                break
-            elseif (version == 0xfd) then
-                protocolString = "MAVLink 2.0"
-                break
-            elseif (version == 0x55) then
-                protocolString = "MAVLink 0.9"
+            protocolString = protocolVersions[version]
+            if (protocolString ~= nil) then
                 break
             else
                 protocolString = "unknown"
