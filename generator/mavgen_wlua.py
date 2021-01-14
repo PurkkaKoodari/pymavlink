@@ -45,16 +45,23 @@ def get_field_info(field):
     if mavlink_type == "char":
         # char (string) types
         field_type = "ftypes.STRING"
+        tvb_func = "string"
         size = count
         count = 1
     elif "int" in mavlink_type:
         # (u)int types
         field_type = "ftypes." + mavlink_type.replace("_t", "").upper()
+        tvb_func = "le_" + ("u" if "u" in mavlink_type else "") + "int" + ("64" if "64" in mavlink_type else "")
+    elif field.enum:
+        # enum types in float/double fields (these will come up at least with command params)
+        field_type = "ftypes.UINT32"
+        tvb_func = "le_" + mavlink_type
     else:
         # float/double
         field_type = "ftypes." + mavlink_type.upper()
+        tvb_func = "le_" + mavlink_type
 
-    return mavlink_type, field_type, size, count
+    return mavlink_type, field_type, tvb_func, size, count
 
 
 def generate_preamble(outf):
@@ -152,7 +159,7 @@ def generate_msg_fields(outf, msg):
     assert isinstance(msg, mavparse.MAVType)
     for f in msg.fields:
         assert isinstance(f, mavparse.MAVField)
-        mavlink_type, field_type, _, count = get_field_info(f)
+        mavlink_type, field_type, _, _, count = get_field_info(f)
         values = "enumEntryName. " + f.enum if f.enum else "nil"
         
         for i in range(0,count):
@@ -173,7 +180,7 @@ f.${fmsg}_${fname}${findex} = ProtoField.new("${fname}${farray} (${ftypename})",
 def generate_field_dissector(outf, msg, field):
     assert isinstance(field, mavparse.MAVField)
     
-    _, _, size, count = get_field_info(field)
+    _, _, tvb_func, size, count = get_field_info(field)
     
     # handle arrays, but not strings
     
@@ -185,29 +192,41 @@ def generate_field_dissector(outf, msg, field):
         t.write(outf,
 """
     if (truncated) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, 0)
+        tree:add_le(f.${fmsg}_${fname}${findex}, padded(offset, ${fbytes}):${ftvbfunc}())
     elseif (offset + ${fbytes} <= limit) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(offset, ${fbytes}))
+        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(offset, ${fbytes}), buffer(offset, ${fbytes}):${ftvbfunc}())
         offset = offset + ${fbytes}
     elseif (offset < limit) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(offset, limit - offset))
+        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(offset, limit - offset), padded(offset, ${fbytes}):${ftvbfunc}())
         offset = limit
         truncated = true
     else
-        tree:add_le(f.${fmsg}_${fname}${findex}, 0)
+        tree:add_le(f.${fmsg}_${fname}${findex}, padded(offset, ${fbytes}):${ftvbfunc}())
         truncated = true
     end
-""", {'fname':field.name, 'fmsg': msg.name, 'fbytes':size, 'findex':index_text})
+""", {'fname':field.name, 'fmsg': msg.name, 'fbytes':size, 'findex':index_text, 'ftvbfunc':tvb_func})
     
 
 def generate_payload_dissector(outf, msg):
     assert isinstance(msg, mavparse.MAVType)
+
+    total_size = 0
+    for f in msg.ordered_fields:
+        _, _, _, size, count = get_field_info(f)
+        total_size += size * count
+
     t.write(outf, 
 """
 -- dissect payload of message type ${msgname}
 function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit)
     local truncated = false
-""", {'msgid':msg.id, 'msgname':msg.name})
+    local padded
+    if (offset + ${msgbytes} > limit) then
+        padded = buffer(0, limit):bytes()
+        padded:set_size(offset + ${msgbytes})
+        padded = padded:tvb("Untruncated payload")
+    end
+""", {'msgid':msg.id, 'msgname':msg.name, 'msgbytes': total_size})
     
     for f in msg.ordered_fields:
         generate_field_dissector(outf, msg, f)
