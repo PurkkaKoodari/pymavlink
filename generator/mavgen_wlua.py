@@ -84,6 +84,8 @@ local signature_time_ref = get_timezone() + os.time{year=2015, month=1, day=1, h
 
 payload_fns = {}
 
+param_fields = {}
+
 protocolVersions = {
     [0xfd] = "MAVLink 2.0",
     [0xfe] = "MAVLink 1.0",
@@ -177,10 +179,49 @@ f.${fmsg}_${fname}${findex} = ProtoField.new("${fname}${farray} (${ftypename})",
 
     t.write(outf, '\n\n')
 
-def generate_field_dissector(outf, msg, field, offset):
+
+def generate_cmd_params(outf, cmd):
+    assert isinstance(cmd, mavparse.MAVEnumEntry)
+
+    t.write(outf,
+"""
+param_fields[${pcid}] = {}
+""", {'pcid': cmd.value})
+
+    for p in cmd.param:
+        assert isinstance(p, mavparse.MAVEnumParam)
+        # only save params that have a label
+        if p.label:
+            # force enum params to uint32 so we can show the names
+            if p.enum:
+                field_type = "ftypes.UINT32"
+                mavlink_type = "uint32_t"
+                values = "enumEntryName." + p.enum
+            else:
+                field_type = "ftypes.FLOAT"
+                mavlink_type = "float"
+                values = "nil"
+            t.write(outf,
+"""
+f.cmd_${pcname}_param${pindex} = ProtoField.new("param${pindex}: ${pname} (${ptypename})", "mavlink_proto.cmd_${pcname}_param${pindex}", ${ptype}, ${pvalues})
+param_fields[${pcid}][${pindex}] = f.cmd_${pcname}_param${pindex}
+""", {'pcid': cmd.value, 'pcname': cmd.name, 'pindex': p.index, 'pname': p.label, 'ptype': field_type, 'ptypename': mavlink_type, 'pvalues': values})
+
+    t.write(outf, '\n\n')
+
+
+def generate_field_dissector(outf, msg, field, offset, is_command):
     assert isinstance(field, mavparse.MAVField)
     
     _, _, tvb_func, size, count = get_field_info(field)
+
+    # handle command params specially
+    param_index = None
+    if is_command:
+        if field.name.startswith("param") and field.name[5:].isdigit():
+            param_index = int(field.name[5:])
+        elif field.name in ("x", "y", "z"):
+            param_index = ("x", "y", "z").index(field.name) + 5
     
     # handle arrays, but not strings
     
@@ -189,17 +230,23 @@ def generate_field_dissector(outf, msg, field, offset):
             index_text = '_' + str(i)
         else:
             index_text = ''
+
+        field_var = t.substitute("f.${fmsg}_${fname}${findex}", {'fmsg': msg.name, 'fname': field.name, 'findex': index_text})
+
+        if param_index is not None:
+            field_var = t.substitute("(param_fields[cmdid] and param_fields[cmdid][${pindex}]) or ${default}", {'pindex': param_index, 'default': field_var})
+
         t.write(outf,
 """
     field_offset = offset + ${foffset}
     if (field_offset + ${fbytes} <= limit) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(field_offset, ${fbytes}), buffer(field_offset, ${fbytes}):${ftvbfunc}())
+        tree:add_le(${fvar}, buffer(field_offset, ${fbytes}), buffer(field_offset, ${fbytes}):${ftvbfunc}())
     elseif (field_offset < limit) then
-        tree:add_le(f.${fmsg}_${fname}${findex}, buffer(field_offset, limit - offset - ${foffset}), padded(field_offset, ${fbytes}):${ftvbfunc}())
+        tree:add_le(${fvar}, buffer(field_offset, limit - offset - ${foffset}), padded(field_offset, ${fbytes}):${ftvbfunc}())
     else
-        tree:add_le(f.${fmsg}_${fname}${findex}, padded(field_offset, ${fbytes}):${ftvbfunc}())
+        tree:add_le(${fvar}, padded(field_offset, ${fbytes}):${ftvbfunc}())
     end
-""", {'fname':field.name, 'fmsg': msg.name, 'foffset':offset, 'fbytes':size, 'findex':index_text, 'ftvbfunc':tvb_func})
+""", {'fvar':field_var, 'foffset':offset, 'fbytes':size, 'ftvbfunc':tvb_func})
     
 
 def generate_payload_dissector(outf, msg):
@@ -225,6 +272,7 @@ function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit, pinfo)
 """, {'msgid':msg.id, 'msgname':msg.name, 'msgbytes': total_size})
 
     # parse command name if applicable
+    is_command = False
     if msg.name in ("COMMAND_INT", "COMMAND_LONG", "COMMAND_ACK", "COMMAND_CANCEL") and "command" in offsets:
         t.write(outf,
 """
@@ -236,9 +284,10 @@ function payload_fns.payload_${msgid}(buffer, tree, msgid, offset, limit, pinfo)
         end
     end
 """, {'foffset': offsets["command"]})
+        is_command = True
     
     for f in msg.fields:
-        generate_field_dissector(outf, msg, f, offsets[f.name])
+        generate_field_dissector(outf, msg, f, offsets[f.name], is_command)
 
     t.write(outf, 
 """
@@ -491,6 +540,9 @@ def generate(basename, xml):
         enums.extend(x.enum)
         filelist.append(os.path.basename(x.filename))
 
+    # find the MAV_CMD enum
+    cmds = next((enum.entry for enum in enums if enum.name == "MAV_CMD"), [])
+
     for m in msgs:
         m.order_map = [ 0 ] * len(m.fieldnames)
         for i in range(0, len(m.fieldnames)):
@@ -502,6 +554,9 @@ def generate(basename, xml):
     generate_msg_table(outf, msgs)
     generate_enum_table(outf, enums)
     generate_body_fields(outf)
+
+    for c in cmds:
+        generate_cmd_params(outf, c)
     
     for m in msgs:
         generate_msg_fields(outf, m)
