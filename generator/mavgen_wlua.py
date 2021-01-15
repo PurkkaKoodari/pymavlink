@@ -250,7 +250,7 @@ def generate_field_dissector(outf, msg, field, offset, is_command):
     else
         tree:add_le(${fvar}, padded(field_offset, ${fbytes}):${ftvbfunc}())
     end
-""", {'fvar':field_var, 'foffset':offset, 'fbytes':size, 'ftvbfunc':tvb_func})
+""", {'fvar':field_var, 'foffset':offset + i * size, 'fbytes':size, 'ftvbfunc':tvb_func})
     
 
 def generate_payload_dissector(outf, msg):
