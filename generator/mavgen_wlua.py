@@ -162,8 +162,12 @@ def generate_msg_fields(outf, msg):
     for f in msg.fields:
         assert isinstance(f, mavparse.MAVField)
         mavlink_type, field_type, _, _, count = get_field_info(f)
-        values = "enumEntryName. " + f.enum if f.enum else "nil"
-        
+        if f.enum:
+            mavlink_type = f.enum
+            values = "enumEntryName. " + f.enum
+        else:
+            values = "nil"
+
         for i in range(0,count):
             if count>1: 
                 array_text = '[' + str(i) + ']'
@@ -195,7 +199,7 @@ param_fields[${pcid}] = {}
             # force enum params to uint32 so we can show the names
             if p.enum:
                 field_type = "ftypes.UINT32"
-                mavlink_type = "uint32_t"
+                mavlink_type = p.enum
                 values = "enumEntryName." + p.enum
             else:
                 field_type = "ftypes.FLOAT"
